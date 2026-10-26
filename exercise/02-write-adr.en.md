@@ -33,10 +33,11 @@ requirement: <paste R-12 here>
 
 | Criterion | Run a | Run b |
 |---|---|---|
-| Uses the scenario's numbers (latency, peak, MailFast limits)? | | |
-| Options considered (list them) | | |
-| Handles "exactly once" loyalty points and MailFast's rate limit? How? | | |
-| Anything invented (a number, tool or fact not in the scenario)? | | |
+| Uses the scenario's numbers (latency, peak, MailFast limits)? | No. It had no numbers; it lists latency/availability targets and MailFast's rate limits/SLA as open questions | Yes: 500 ms p95 limit vs MailFast p95 1.5 s (rules out sync calls); 200 orders/s peak vs 50 emails/s limit, so about 150 emails/s must queue |
+| Options considered (list them) | A: direct synchronous calls; B: event + message broker (chosen); C: orchestrator service | 1: add to existing sync gRPC chain; 2: background goroutines; 3: RabbitMQ events (chosen); 4: Kafka |
+| Handles "exactly once" loyalty points and MailFast's rate limit? How? | No. Neither requirement was in its input; broker choice and limits left open | Exactly once: loyaltyservice deduplicates on `order_id` (idempotent consumer, since the broker itself delivers at least once). Rate limit: email has its own durable queue, so excess emails wait instead of failing checkout. Lost-event risk (outbox) left as an open question |
+| Anything invented (a number, tool or fact not in the scenario)? | Nothing evident; current flow marked [Assumption]/[Inferred] | "Nobody on the team has used Kafka": the scenario only says two developers know RabbitMQ, so this is not stated. "Kafka is heavier to run" is general knowledge, not from the scenario |
+
 
 ## Take ownership: your final ADR
 
@@ -49,6 +50,6 @@ You will defend this ADR in front of a review board in Part B, so make sure you 
 
 | # | What you changed from the AI's draft | Why |
 |---|---|---|
-| 1 | | |
-| 2 | | |
-| 3 | | |
+| 1 | delete some Kafka's cons (no team experience) | The scenario says two developers know RabbitMQ but says nothing about Kafka, so 'no team experience' is invented |
+| 2 | Email consumer: changed "≤ 50 msgs/s (prefetch + rate limiter)" to a single consumer replica limited to 50/s, restarted by Kubernetes on failure | A per-replica limiter would exceed MailFast's 50/s limit once emailservice scales to 2+ replicas. One replica keeps the total ≤ 50/s; the queue holds emails during a restart (trade-off: availability of email sending vs simplicity) |
+| 3 | Replaced "publish with a short retry; event may be lost if RabbitMQ is down (open question)" with a transactional outbox: checkout writes `OrderPlaced` to an outbox table in a new database, and a relay publishes it to RabbitMQ with retries. | A failed publish would lose the event, so loyalty points would never be awarded, which breaks "exactly once" in the scenario.
